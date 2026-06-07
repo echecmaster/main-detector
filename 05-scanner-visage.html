@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scanner Facial Automatique</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <style>
+        body { margin: 0; padding: 0; background-color: #121212; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; font-family: sans-serif; color: white; }
+        h1 { margin-bottom: 5px; font-size: 2rem; color: #00FF00; }
+        .instructions { color: #94a3b8; margin-bottom: 15px; font-size: 0.9rem; text-align: center; }
+        .container { position: relative; width: 640px; height: 480px; }
+        #webcam, #output_canvas { position: absolute; top: 0; left: 0; transform: scaleX(-1); width: 640px; height: 480px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        .controls { margin-top: 15px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+        .back-btn { margin-top: 15px; color: #94a3b8; text-decoration: none; font-size: 0.9rem; }
+        #db-status { color: #00FF00; font-size: 0.9rem; font-weight: bold; background: #222; padding: 10px 20px; border-radius: 5px; border: 1px solid #333; font-family: monospace; }
+    </style>
+</head>
+<body>
+
+    <h1>Scanner d'Identité Automatique</h1>
+    <div class="instructions">Reconnaissance par élimination. Affichage du profil le plus proche de 0.</div>
+
+    <div class="container">
+        <video id="webcam" autoplay playsinline muted width="640" height="480" style="display: none;"></video>
+        <canvas id="output_canvas" width="640" height="480"></canvas>
+    </div>
+
+    <div class="controls">
+        <div id="db-status">Analyse géométrique...</div>
+    </div>
+
+    <a href="index.html" class="back-btn">← Retour au Hub</a>
+
+    <script>
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const dbStatus = document.getElementById('db-status');
+
+        // Base de données complète intégrée (3 Gilles / 4 Charlélie)
+        const faceDatabase = [
+            {
+                "name": "gilles",
+                "signature": [0.713161927086105, 0.5000577909017834, 0.42005105989040736, 1.4261590161409514]
+            },
+            {
+                "name": "gilles",
+                "signature": [0.7185528330609803, 0.5001896857760029, 0.4106817013996286, 1.4365606758688059]
+            },
+            {
+                "name": "gilles",
+                "signature": [0.7295679126248675, 0.5060760141372413, 0.41186463324037537, 1.4416172516467418]
+            },
+            {
+                "name": "charlélie",
+                "signature": [0.7300881693995114, 0.5584884198418469, 0.39106232526912627, 1.3072574890742734]
+            },
+            {
+                "name": "charlélie",
+                "signature": [0.74624731942042, 0.5564436486926683, 0.4053846501666557, 1.3411013337535334]
+            },
+            {
+                "name": "charlélie",
+                "signature": [0.7677548668658665, 0.5430809950300972, 0.40510818326313397, 1.4137023278145058]
+            },
+            {
+                "name": "charlélie",
+                "signature": [0.7614929439942721, 0.5404286800076068, 0.40168540172289535, 1.4090535387269856]
+            }
+        ];
+
+        const getDistance = (p1, p2) => Math.sqrt(Math.pow(p1.x-p2.x,2) + Math.pow(p1.y-p2.y,2) + Math.pow(p1.z-p2.z,2));
+
+        function onResults(results) {
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            let nameLabel = "Inconnu";
+            let debugInfo = "Aucun visage détecté";
+
+            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                const landmarks = results.multiFaceLandmarks[0];
+
+                // Points verts de suivi sur l'écran
+                canvasCtx.fillStyle = "#00FF00";
+                const trackerPoints = [10, 33, 263, 152, 61, 291, 1];
+                for (const idx of trackerPoints) {
+                    const pt = landmarks[idx];
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(pt.x * canvasElement.width, pt.y * canvasElement.height, 3, 0, 2 * Math.PI);
+                    canvasCtx.fill();
+                }
+
+                // Calcul mathématique des ratios en direct
+                const d1 = getDistance(landmarks[33], landmarks[263]);
+                const d2 = getDistance(landmarks[1], landmarks[152]);
+                const d3 = getDistance(landmarks[61], landmarks[291]);
+                const d4 = getDistance(landmarks[10], landmarks[152]);
+                const liveSignature = [d1 / d4, d2 / d4, d3 / d4, d1 / d2];
+
+                if (faceDatabase.length > 0) {
+                    let minDiff = Infinity;
+                    let match = "Inconnu";
+
+                    let meilleurGilles = Infinity;
+                    let meilleurCharlelie = Infinity;
+
+                    // On boucle sur l'ensemble de la base intégrée
+                    for (const face of faceDatabase) {
+                        let diff = 0;
+                        for (let i = 0; i < liveSignature.length; i++) {
+                            diff += Math.abs(liveSignature[i] - face.signature[i]);
+                        }
+                        
+                        // On conserve la meilleure valeur pour l'affichage de débug
+                        if (face.name === "gilles" && diff < meilleurGilles) meilleurGilles = diff;
+                        if (face.name === "charlélie" && diff < meilleurCharlelie) meilleurCharlelie = diff;
+
+                        // Sélection du plus petit écart absolu (le plus proche de 0)
+                        if (diff < minDiff) {
+                            minDiff = diff;
+                            match = face.name;
+                        }
+                    }
+
+                    nameLabel = match;
+                    debugInfo = `Écarts minimaux -> gilles: ${meilleurGilles.toFixed(3)} | charlélie: ${meilleurCharlelie.toFixed(3)}`;
+                }
+
+                // Affichage du prénom au-dessus du visage (en gérant l'effet miroir)
+                canvasCtx.save();
+                canvasCtx.translate(canvasElement.width, 0);
+                canvasCtx.scale(-1, 1);
+                
+                const tx = canvasElement.width - (landmarks[10].x * canvasElement.width);
+                const ty = (landmarks[10].y * canvasElement.height) - 20;
+
+                // Couleur personnalisée : Bleu pour Charlélie, Vert pour Gilles
+                canvasCtx.fillStyle = nameLabel === "charlélie" ? "#3b82f6" : "#00FF00";
+                canvasCtx.font = "bold 26px sans-serif";
+                canvasCtx.textAlign = "center";
+                canvasCtx.fillText(nameLabel.toUpperCase(), tx, ty);
+                canvasCtx.restore();
+            }
+
+            // Affichage de la télémétrie des écarts
+            dbStatus.innerText = debugInfo;
+            dbStatus.style.color = nameLabel === "charlélie" ? "#3b82f6" : "#00FF00";
+        }
+
+        // Démarrage de MediaPipe Face Mesh
+        const faceMesh = new FaceMesh({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
+        faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        faceMesh.onResults(onResults);
+
+        // Liaison Webcam
+        const camera = new Camera(videoElement, {
+            onFrame: async () => { await faceMesh.send({image: videoElement}); },
+            width: 640, height: 480
+        });
+        camera.start();
+    </script>
+</body>
+</html>
