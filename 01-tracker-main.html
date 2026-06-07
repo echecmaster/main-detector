@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Détection de Main en Temps Réel</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #121212;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: sans-serif;
+            color: white;
+        }
+        .container {
+            position: relative;
+            width: 640px;
+            height: 480px;
+        }
+        /* On superpose la vidéo et le dessin (canvas) */
+        #webcam, #output_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform: scaleX(-1); /* Effet miroir plus naturel */
+            width: 640px;
+            height: 480px;
+            border-radius: 10px;
+        }
+        #loading {
+            position: absolute;
+            font-size: 1.2rem;
+            background: rgba(0,0,0,0.7);
+            padding: 10px 20px;
+            border-radius: 5px;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loading">Chargement de l'IA... Patiente un instant.</div>
+
+    <div class="container">
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="output_canvas" width="640" height="480"></canvas>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const loadingDiv = document.getElementById('loading');
+
+        // Fonction qui s'exécute à chaque fois que l'IA détecte une main
+        function onResults(results) {
+            // Masquer le message de chargement dès les premières données reçues
+            loadingDiv.style.display = "none";
+
+            // Effacer le canvas précédent
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            // Dessiner l'image de la webcam en fond
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            // Si une ou plusieurs mains sont détectées
+            if (results.multiHandLandmarks) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    
+                    // 1. DESSINER LES TRAITS VERTS POUR LES DOIGTS
+                    canvasCtx.strokeStyle = "#00FF00"; // Vert flash
+                    canvasCtx.lineWidth = 4;
+
+                    // Tableau des connexions de la main (quelles articulations relier)
+                    const connections = [
+                        [0, 1], [1, 2], [2, 3], [3, 4],       // Pouce
+                        [0, 5], [5, 6], [6, 7], [7, 8],       // Index
+                        [5, 9], [9, 10], [10, 11], [11, 12],  // Majeur
+                        [9, 13], [13, 14], [14, 15], [15, 16], // Annulaire
+                        [13, 17], [17, 18], [18, 19], [19, 20],// Auriculaire
+                        [0, 17]                               // Base de la paume
+                    ];
+
+                    for (const connection of connections) {
+                        const pt1 = landmarks[connection[0]];
+                        const pt2 = landmarks[connection[1]];
+
+                        canvasCtx.beginPath();
+                        canvasCtx.moveTo(pt1.x * canvasElement.width, pt1.y * canvasElement.height);
+                        canvasCtx.lineTo(pt2.x * canvasElement.width, pt2.y * canvasElement.height);
+                        canvasCtx.stroke();
+                    }
+
+                    // 2. DESSINER LE ROND POUR LA PAUME DE LA MAIN
+                    // Le point 9 correspond à la base du majeur (idéal pour centrer la paume)
+                    const palmCenter = landmarks[9]; 
+                    
+                    canvasCtx.beginPath();
+                    // Conversion des coordonnées relatives (0 à 1) en pixels
+                    const cx = palmCenter.x * canvasElement.width;
+                    const cy = palmCenter.y * canvasElement.height;
+                    
+                    canvasCtx.arc(cx, cy, 25, 0, 2 * Math.PI); // Rayon de 25 pixels
+                    canvasCtx.fillStyle = "rgba(0, 255, 0, 0.5)"; // Vert transparent
+                    canvasCtx.fill();
+                    canvasCtx.strokeStyle = "#00FF00";
+                    canvasCtx.stroke();
+                }
+            }
+        }
+
+        // Configuration de MediaPipe Hands
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,             // Détecte jusqu'à 2 mains
+            modelComplexity: 1,         // Précision du modèle (0 ou 1)
+            minDetectionConfidence: 0.5, // Seuil de confiance pour détecter la main
+            minTrackingConfidence: 0.5   // Seuil de confiance pour le suivi
+        });
+
+        hands.onResults(onResults);
+
+        // Lancement de la caméra
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 640,
+            height: 480
+        });
+        
+        camera.start();
+    </script>
+</body>
+</html>

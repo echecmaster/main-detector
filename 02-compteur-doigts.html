@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Compteur de Doigts - Correctif</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #121212;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: sans-serif;
+            color: white;
+        }
+        .container {
+            position: relative;
+            width: 640px;
+            height: 480px;
+        }
+        #webcam, #output_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform: scaleX(-1); /* Effet miroir */
+            width: 640px;
+            height: 480px;
+            border-radius: 10px;
+        }
+        #counter-display {
+            font-size: 3rem;
+            font-weight: bold;
+            color: #FFD700;
+            margin-bottom: 15px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1.2rem;
+            background: rgba(0,0,0,0.8);
+            padding: 15px 25px;
+            border-radius: 5px;
+            z-index: 10;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="counter-display">Total Doigts : 0</div>
+
+    <div class="container">
+        <div id="loading">Initialisation de la caméra et de l'IA...</div>
+        <video id="webcam" style="display:none;" autoplay playsinline></video>
+        <canvas id="output_canvas" width="640" height="480"></canvas>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const loadingDiv = document.getElementById('loading');
+        const counterDisplay = document.getElementById('counter-display');
+
+        function onResults(results) {
+            // Dès que l'IA répond, on cache le message de chargement
+            if (loadingDiv) loadingDiv.style.display = "none";
+
+            // 1. Effacer le canvas et dessiner l'image de la webcam
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            let totalFingersCount = 0;
+
+            // Vérification stricte si des mains sont visibles
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                
+                for (let index = 0; index < results.multiHandLandmarks.length; index++) {
+                    const landmarks = results.multiHandLandmarks[index];
+                    // MediaPipe inverse parfois le label à cause du miroir, on récupère le côté brut
+                    const handedness = results.multiHandedness[index].label; 
+                    
+                    // --- DESSIN DES TRAITS VERTS ---
+                    canvasCtx.strokeStyle = "#00FF00"; 
+                    canvasCtx.lineWidth = 4;
+
+                    const connections = [
+                        [0, 1], [1, 2], [2, 3], [3, 4],
+                        [0, 5], [5, 6], [6, 7], [7, 8],
+                        [5, 9], [9, 10], [10, 11], [11, 12],
+                        [9, 13], [13, 14], [14, 15], [15, 16],
+                        [13, 17], [17, 18], [18, 19], [19, 20],
+                        [0, 17]
+                    ];
+
+                    for (const connection of connections) {
+                        const pt1 = landmarks[connection[0]];
+                        const pt2 = landmarks[connection[1]];
+                        canvasCtx.beginPath();
+                        canvasCtx.moveTo(pt1.x * canvasElement.width, pt1.y * canvasElement.height);
+                        canvasCtx.lineTo(pt2.x * canvasElement.width, pt2.y * canvasElement.height);
+                        canvasCtx.stroke();
+                    }
+
+                    // --- DESSIN DU ROND SUR LA PAUME ---
+                    const palmCenter = landmarks[9]; 
+                    const cx = palmCenter.x * canvasElement.width;
+                    const cy = palmCenter.y * canvasElement.height;
+
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(cx, cy, 25, 0, 2 * Math.PI);
+                    canvasCtx.fillStyle = "rgba(0, 255, 0, 0.4)";
+                    canvasCtx.fill();
+                    canvasCtx.stroke();
+
+                    // --- COMPTEUR DE DOIGTS ---
+                    let handFingers = 0;
+
+                    // Les 4 doigts (Index, Majeur, Annulaire, Auriculaire)
+                    if (landmarks[8].y < landmarks[6].y)   handFingers++;
+                    if (landmarks[12].y < landmarks[10].y) handFingers++;
+                    if (landmarks[16].y < landmarks[14].y) handFingers++;
+                    if (landmarks[20].y < landmarks[18].y) handFingers++;
+
+                    // Le pouce (on adapte selon la main gauche / droite)
+                    // Note : Avec le scaleX(-1) du CSS, la logique du pouce peut varier selon l'orientation
+                    if (handedness === "Left") {
+                        if (landmarks[4].x > landmarks[3].x) handFingers++;
+                    } else {
+                        if (landmarks[4].x < landmarks[3].x) handFingers++;
+                    }
+
+                    totalFingersCount += handFingers;
+
+                    // --- AFFICHAGE DU CHIFFRE AU-DESSUS DE LA MAIN ---
+                    canvasCtx.save();
+                    // On annule le miroir textuel pour que le chiffre s'affiche à l'endroit
+                    canvasCtx.translate(canvasElement.width, 0);
+                    canvasCtx.scale(-1, 1);
+                    
+                    // Calcul de la position du texte (au-dessus du majeur, inversé pour le miroir)
+                    const textX = canvasElement.width - (landmarks[12].x * canvasElement.width);
+                    const textY = (landmarks[12].y * canvasElement.height) - 30;
+
+                    canvasCtx.fillStyle = "#FFD700";
+                    canvasCtx.font = "bold 30px sans-serif";
+                    canvasCtx.fillText(handFingers, textX, textY);
+                    canvasCtx.restore();
+                }
+            } else {
+                // Si aucune main n'est détectée, on affiche quand même le flux vidéo vide
+                canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+                canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+            }
+
+            // Mise à jour du compteur global
+            counterDisplay.innerText = `Total Doigts : ${totalFingersCount}`;
+        }
+
+        // Initialisation du modèle MediaPipe
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(onResults);
+
+        // Gestion de la caméra
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 640,
+            height: 480
+        });
+        
+        camera.start().catch(err => {
+            alert("Erreur d'accès à la caméra. Vérifie les autorisations de ton navigateur.");
+            console.error(err);
+        });
+    </script>
+</body>
+</html>

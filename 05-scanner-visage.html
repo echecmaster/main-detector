@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scanner Facial Local (Charlélie & Gilles)</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #121212;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: sans-serif;
+            color: white;
+        }
+        h1 {
+            margin-bottom: 5px;
+            font-size: 2rem;
+            color: #00FF00;
+            text-shadow: 0 0 10px rgba(0, 255, 0, 0.2);
+        }
+        .instructions {
+            color: #94a3b8;
+            margin-bottom: 15px;
+            font-size: 0.9rem;
+        }
+        .container {
+            position: relative;
+            width: 640px;
+            height: 480px;
+        }
+        #webcam, #output_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform: scaleX(-1); /* Effet miroir */
+            width: 640px;
+            height: 480px;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        .controls {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+        }
+        button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 5px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+        }
+        button:active {
+            transform: scale(0.98);
+        }
+        .btn-charlie { background-color: #3b82f6; color: white; }
+        .btn-charlie:hover { background-color: #2563eb; }
+        .btn-gilles { background-color: #eab308; color: black; }
+        .btn-gilles:hover { background-color: #ca8a04; }
+        
+        .back-btn {
+            margin-top: 20px;
+            padding: 10px 20px;
+            background: #1e293b;
+            color: #fff;
+            text-decoration: none;
+            border-radius: 5px;
+            border: 1px solid #334155;
+            transition: 0.2s;
+        }
+        .back-btn:hover {
+            background: #334155;
+            color: #00FF00;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.85);
+            padding: 15px 25px;
+            border-radius: 5px;
+            z-index: 10;
+            border: 1px solid #334155;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Scanner d'Identité Faciale</h1>
+    <div class="instructions">Ouvrable en double-clic ! Placez-vous bien au centre de la caméra.</div>
+
+    <div class="container">
+        <div id="loading">Chargement du scanner facial...</div>
+        <video id="webcam" autoplay playsinline muted width="640" height="480" style="display: none;"></video>
+        <canvas id="output_canvas" width="640" height="480"></canvas>
+    </div>
+
+    <div class="controls">
+        <button class="btn-charlie" onclick="saveCurrentFace('Charlélie')">Enregistrer Charlélie</button>
+        <button class="btn-gilles" onclick="saveCurrentFace('Gilles')">Enregistrer Gilles</button>
+    </div>
+
+    <a href="../index.html" class="back-btn">← Retour au Hub</a>
+
+    <script>
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const loadingDiv = document.getElementById('loading');
+
+        let faceDatabase = [];
+        let currentFaceLandmarks = null;
+
+        // Fonction pour calculer la distance entre deux points 3D
+        function getDistance(pt1, pt2) {
+            return Math.sqrt(Math.pow(pt1.x - pt2.x, 2) + Math.pow(pt1.y - pt2.y, 2) + Math.pow(pt1.z - pt2.z, 2));
+        }
+
+        // Génère une "empreinte géométrique" du visage basée sur des ratios de distances
+        function extractFaceSignature(landmarks) {
+            // On sélectionne quelques points clés stables (nez, yeux, mâchoire, front)
+            const d1 = getDistance(landmarks[33], landmarks[263]); // Écartement des yeux
+            const d2 = getDistance(landmarks[1], landmarks[152]);  // Longueur du nez au menton
+            const d3 = getDistance(landmarks[61], landmarks[291]); // Largeur de la bouche
+            const d4 = getDistance(landmarks[10], landmarks[152]); // Hauteur totale du visage
+            
+            // On crée des ratios pour que l'identification marche même si on recule ou avance
+            return [d1 / d4, d2 / d4, d3 / d4, d1 / d2];
+        }
+
+        function onResults(results) {
+            if (loadingDiv) loadingDiv.style.display = "none";
+
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            let identifiedName = "Inconnu";
+
+            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                // On prend le premier visage détecté
+                const landmarks = results.multiFaceLandmarks[0];
+                currentFaceLandmarks = landmarks;
+
+                // --- 1. DESSINER LES LIGNES DU VISAGE ---
+                canvasCtx.strokeStyle = "rgba(0, 255, 0, 0.4)";
+                canvasCtx.lineWidth = 1;
+
+                // On dessine un maillage léger autour des yeux, sourcils et contours
+                const keyPoints = [10, 33, 263, 152, 61, 291, 1, 4, 5, 6];
+                
+                // Dessiner les points du maillage principal
+                for (const index of keyPoints) {
+                    const pt = landmarks[index];
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(pt.x * canvasElement.width, pt.y * canvasElement.height, 3, 0, 2 * Math.PI);
+                    canvasCtx.fillStyle = "#00FF00";
+                    canvasCtx.fill();
+                }
+
+                // --- 2. RECONNAISSANCE FACIALE (COMPARAISON GEOMETRIQUE) ---
+                const currentSignature = extractFaceSignature(landmarks);
+
+                if (faceDatabase.length > 0) {
+                    let bestScore = Infinity;
+                    let matchName = "Inconnu";
+
+                    for (const face of faceDatabase) {
+                        // Calcul de la différence mathématique entre le visage à l'écran et la bdd
+                        let diff = 0;
+                        for (let i = 0; i < currentSignature.length; i++) {
+                            diff += Math.abs(currentSignature[i] - face.signature[i]);
+                        }
+
+                        // Plus la différence est petite, plus le visage ressemble
+                        if (diff < bestScore) {
+                            bestScore = diff;
+                            matchName = face.name;
+                        }
+                    }
+
+                    // Seuil de tolérance (si la différence est trop grande, c'est un inconnu)
+                    if (bestScore < 0.12) {
+                        identifiedName = matchName;
+                    }
+                }
+
+                // --- 3. AFFICHAGE DU TEXTE AU-DESSUS DE LA TÊTE ---
+                canvasCtx.save();
+                canvasCtx.translate(canvasElement.width, 0);
+                canvasCtx.scale(-1, 1);
+                
+                // Position au-dessus du front (point 10)
+                const textX = canvasElement.width - (landmarks[10].x * canvasElement.width);
+                const textY = (landmarks[10].y * canvasElement.height) - 20;
+
+                canvasCtx.fillStyle = "#00FF00";
+                canvasCtx.font = "bold 24px sans-serif";
+                canvasCtx.textAlign = "center";
+                canvasCtx.fillText(identifiedName, textX, textY);
+                canvasCtx.restore();
+            } else {
+                currentFaceLandmarks = null;
+            }
+        }
+
+        // Configuration de MediaPipe Face Mesh
+        const faceMesh = new FaceMesh({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+        });
+
+        faceMesh.setOptions({
+            maxNumFaces: 1,
+            refineLandmarks: false,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        faceMesh.onResults(onResults);
+
+        // Lancement caméra
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await faceMesh.send({image: videoElement});
+            },
+            width: 640,
+            height: 480
+        });
+        camera.start();
+
+        // Enregistrer le visage actuel
+        function saveCurrentFace(name) {
+            if (!currentFaceLandmarks) {
+                alert("Aucun visage détecté. Placez-vous bien devant la caméra.");
+                return;
+            }
+
+            const signature = extractFaceSignature(currentFaceLandmarks);
+            
+            // Supprime l'ancien enregistrement s'il existe
+            faceDatabase = faceDatabase.filter(f => f.name !== name);
+            
+            // Sauvegarde
+            faceDatabase.push({ name: name, signature: signature });
+            alert(`Le visage de ${name} a été enregistré avec succès !`);
+        }
+    </script>
+</body>
+</html>
