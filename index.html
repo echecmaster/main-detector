@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Compteur de Doigts en Temps Réel</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #121212;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: sans-serif;
+            color: white;
+        }
+        .container {
+            position: relative;
+            width: 640px;
+            height: 480px;
+        }
+        #webcam, #output_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform: scaleX(-1); /* Effet miroir */
+            width: 640px;
+            height: 480px;
+            border-radius: 10px;
+        }
+        #counter-display {
+            font-size: 4rem;
+            font-weight: bold;
+            color: #FFD700; /* Jaune Or */
+            margin-bottom: 15px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        #loading {
+            position: absolute;
+            font-size: 1.2rem;
+            background: rgba(0,0,0,0.7);
+            padding: 10px 20px;
+            border-radius: 5px;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="counter-display">Doigts : 0</div>
+
+    <div class="container">
+        <div id="loading">Chargement de l'IA...</div>
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="output_canvas" width="640" height="480"></canvas>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const loadingDiv = document.getElementById('loading');
+        const counterDisplay = document.getElementById('counter-display');
+
+        function onResults(results) {
+            loadingDiv.style.display = "none";
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            let totalFingersCount = 0;
+
+            if (results.multiHandLandmarks && results.multiHandedness) {
+                // On boucle sur chaque main détectée
+                for (let index = 0; index < results.multiHandtext; index++) {
+                    const landmarks = results.multiHandLandmarks[index];
+                    const handedness = results.multiHandedness[index].label; // "Left" ou "Right"
+                    
+                    // --- 1. DESSINER LA MAIN (Traits et Rond) ---
+                    canvasCtx.strokeStyle = "#00FF00"; 
+                    canvasCtx.lineWidth = 4;
+
+                    const connections = [
+                        [0, 1], [1, 2], [2, 3], [3, 4],
+                        [0, 5], [5, 6], [6, 7], [7, 8],
+                        [5, 9], [9, 10], [10, 11], [11, 12],
+                        [9, 13], [13, 14], [14, 15], [15, 16],
+                        [13, 17], [17, 18], [18, 19], [19, 20],
+                        [0, 17]
+                    ];
+
+                    for (const connection of connections) {
+                        const pt1 = landmarks[connection[0]];
+                        const pt2 = landmarks[connection[1]];
+                        canvasCtx.beginPath();
+                        canvasCtx.moveTo(pt1.x * canvasElement.width, pt1.y * canvasElement.height);
+                        canvasCtx.lineTo(pt2.x * canvasElement.width, pt2.y * canvasElement.height);
+                        canvasCtx.stroke();
+                    }
+
+                    // Rond sur la paume
+                    const palmCenter = landmarks[9]; 
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(palmCenter.x * canvasElement.width, palmCenter.y * canvasElement.height, 25, 0, 2 * Math.PI);
+                    canvasCtx.fillStyle = "rgba(0, 255, 0, 0.4)";
+                    canvasCtx.fill();
+                    canvasCtx.stroke();
+
+                    // --- 2. LOGIQUE POUR COMPTER LES DOIGTS ---
+                    let handFingers = 0;
+
+                    // Les 4 doigts classiques : on compare le bout (Y) avec l'articulation précédente
+                    // Rappel : En coordonnées d'écran, le haut c'est 0, donc "plus haut" signifie "Y plus petit"
+                    if (landmarks[8].y < landmarks[6].y)   handFingers++; // Index
+                    if (landmarks[12].y < landmarks[10].y) handFingers++; // Majeur
+                    if (landmarks[16].y < landmarks[14].y) handFingers++; // Annulaire
+                    if (landmarks[20].y < landmarks[18].y) handFingers++; // Auriculaire
+
+                    // Le pouce : détection horizontale (X). 
+                    // À cause de l'effet miroir de la caméra, la logique change selon si c'est la main gauche ou droite
+                    if (handedness === "Left") {
+                        if (landmarks[4].x > landmarks[3].x) handFingers++;
+                    } else {
+                        if (landmarks[4].x < landmarks[3].x) handFingers++;
+                    }
+
+                    // On ajoute les doigts de cette main au total général
+                    totalFingersCount += handFingers;
+                }
+            }
+
+            // Mettre à jour l'affichage du texte en haut
+            counterDisplay.innerText = `Doigts : ${totalFingersCount}`;
+        }
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 2, // Gère bien jusqu'à 2 mains simultanément
+            modelComplexity: 1,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6
+        });
+
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 640,
+            height: 480
+        });
+        camera.start();
+    </script>
+</body>
+</html>
