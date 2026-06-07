@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Générateur d'Empreinte Faciale</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <style>
+        body { margin: 0; padding: 20px; background-color: #121212; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
+        h1 { color: #00FF00; }
+        .box { background: #1e293b; padding: 25px; border-radius: 10px; max-width: 500px; width: 100%; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        input, button { width: 100%; padding: 12px; margin-top: 15px; border-radius: 5px; border: none; font-weight: bold; box-sizing: border-box; }
+        input[type="text"] { background: #0f172a; color: white; border: 1px solid #334155; }
+        button { background: #00FF00; color: #0f172a; cursor: pointer; }
+        button:hover { background: #00cc00; }
+        #preview { max-width: 100%; max-height: 300px; margin-top: 15px; border-radius: 5px; display: none; }
+        .back-btn { margin-top: 20px; color: #94a3b8; text-decoration: none; }
+    </style>
+</head>
+<body>
+
+    <h1>Étape 1 : Générateur d'Identité</h1>
+    
+    <div class="box">
+        <p>Charge une photo claire d'un visage pour extraire sa signature mathématique.</p>
+        
+        <input type="file" id="imageInput" accept="image/*">
+        <input type="text" id="nameInput" placeholder="Prénom de la personne (ex: Charlélie)">
+        
+        <img id="preview" alt="Aperçu">
+        
+        <button onclick="generateAndDownload()">Générer & Télécharger le fichier .json</button>
+    </div>
+
+    <a href="index.html" class="back-btn">← Retour au Hub</a>
+
+    <canvas id="hiddenCanvas" style="display:none;"></canvas>
+
+    <script>
+        const imageInput = document.getElementById('imageInput');
+        const nameInput = document.getElementById('nameInput');
+        const preview = document.getElementById('preview');
+        const hiddenCanvas = document.getElementById('hiddenCanvas');
+        const ctx = hiddenCanvas.getContext('2d');
+        
+        let currentSignature = null;
+
+        // Configuration de MediaPipe
+        const faceMesh = new FaceMesh({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+        });
+        faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: false, minDetectionConfidence: 0.5 });
+        
+        faceMesh.onResults((results) => {
+            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                const landmarks = results.multiFaceLandmarks[0];
+                
+                // Calcul des ratios géométriques du visage
+                const getDist = (p1, p2) => Math.sqrt(Math.pow(p1.x-p2.x,2) + Math.pow(p1.y-p2.y,2) + Math.pow(p1.z-p2.z,2));
+                const d1 = getDist(landmarks[33], landmarks[263]); // Yeux
+                const d2 = getDist(landmarks[1], landmarks[152]);  // Nez/Menton
+                const d3 = getDist(landmarks[61], landmarks[291]); // Bouche
+                const d4 = getDist(landmarks[10], landmarks[152]); // Hauteur visage
+                
+                currentSignature = [d1 / d4, d2 / d4, d3 / d4, d1 / d2];
+                alert("Visage analysé avec succès ! Prêt pour le téléchargement.");
+            } else {
+                currentSignature = null;
+                alert("Aucun visage détecté sur cette photo. Essaie avec une autre image bien éclairée.");
+            }
+        });
+
+        // Afficher l'image et l'envoyer à l'IA lors de l'import
+        imageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                preview.src = event.target.result;
+                preview.style.display = 'block';
+
+                const img = new Image();
+                img.onload = async () => {
+                    hiddenCanvas.width = img.width;
+                    hiddenCanvas.height = img.height;
+                    ctx.drawImage(img, 0, 0);
+                    await faceMesh.send({ image: hiddenCanvas });
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        // Téléchargement du fichier de données
+        function generateAndDownload() {
+            const name = nameInput.value.trim();
+            if (!name) return alert("Veuillez entrer un prénom.");
+            if (!currentSignature) return alert("Veuillez d'abord charger une photo valide.");
+
+            const data = { name: name, signature: currentSignature };
+            const jsonString = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data));
+            
+            const downloadAnchor = document.createElement('a');
+            downloadAnchor.setAttribute("href", jsonString);
+            downloadAnchor.setAttribute("download", `identite-${name.toLowerCase()}.json`);
+            document.body.appendChild(downloadAnchor);
+            downloadAnchor.click();
+            downloadAnchor.remove();
+        }
+    </script>
+</body>
+</html>
