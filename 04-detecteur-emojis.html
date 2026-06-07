@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Détecteur de Gestes Émojis</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #121212;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: sans-serif;
+            color: white;
+        }
+        h1 {
+            margin-bottom: 15px;
+            font-size: 2rem;
+            color: #ff007f;
+            text-shadow: 0 0 10px rgba(255, 0, 127, 0.3);
+        }
+        .container {
+            position: relative;
+            width: 640px;
+            height: 480px;
+        }
+        #webcam, #output_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform: scaleX(-1); /* Effet miroir */
+            width: 640px;
+            height: 480px;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1.2rem;
+            background: rgba(0,0,0,0.8);
+            padding: 15px 25px;
+            border-radius: 5px;
+            z-index: 10;
+        }
+        .back-btn {
+            margin-top: 20px;
+            padding: 10px 20px;
+            background: #1e293b;
+            color: #fff;
+            text-decoration: none;
+            border-radius: 5px;
+            border: 1px solid #334155;
+            transition: 0.2s;
+        }
+        .back-btn:hover {
+            background: #334155;
+            color: #ff007f;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Traducteur de Gestes en Émojis</h1>
+
+    <div class="container">
+        <div id="loading">Initialisation du décodage de gestes...</div>
+        <video id="webcam" style="display:none;" autoplay playsinline></video>
+        <canvas id="output_canvas" width="640" height="480"></canvas>
+    </div>
+
+    <a href="../index.html" class="back-btn">← Retour au Hub</a>
+
+    <script>
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const loadingDiv = document.getElementById('loading');
+
+        // Fonction utilitaire pour calculer la distance entre deux points en 2D
+        function getDistance(pt1, pt2) {
+            return Math.sqrt(Math.pow(pt1.x - pt2.x, 2) + Math.pow(pt1.y - pt2.y, 2));
+        }
+
+        function onResults(results) {
+            if (loadingDiv) loadingDiv.style.display = "none";
+
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            let isHeartFormed = false;
+            let heartCenter = { x: 0, y: 0 };
+
+            // --- 1. DÉTECTION DU CŒUR (DEUX MAINS COMPLICES) ---
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length === 2) {
+                const hand1 = results.multiHandLandmarks[0];
+                const hand2 = results.multiHandLandmarks[1];
+
+                const distanceIndex = getDistance(hand1[8], hand2[8]);
+                const distanceThumbs = getDistance(hand1[4], hand2[4]);
+
+                if (distanceIndex < 0.12 && distanceThumbs < 0.12) {
+                    isHeartFormed = true;
+                    heartCenter.x = (hand1[9].x + hand2[9].x) / 2;
+                    heartCenter.y = (hand1[9].y + hand2[9].y) / 2;
+                }
+            }
+
+            if (results.multiHandLandmarks && results.multiHandedness) {
+                for (let index = 0; index < results.multiHandLandmarks.length; index++) {
+                    const landmarks = results.multiHandLandmarks[index];
+                    const handedness = results.multiHandedness[index].label;
+                    
+                    // Dessin du squelette classique
+                    canvasCtx.strokeStyle = "#ff007f"; 
+                    canvasCtx.lineWidth = 3;
+                    const connections = [
+                        [0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8],
+                        [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16],
+                        [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]
+                    ];
+                    for (const connection of connections) {
+                        const pt1 = landmarks[connection[0]];
+                        const pt2 = landmarks[connection[1]];
+                        canvasCtx.beginPath();
+                        canvasCtx.moveTo(pt1.x * canvasElement.width, pt1.y * canvasElement.height);
+                        canvasCtx.lineTo(pt2.x * canvasElement.width, pt2.y * canvasElement.height);
+                        canvasCtx.stroke();
+                    }
+
+                    if (isHeartFormed) continue;
+
+                    // --- ANALYSE DE L'ÉTAT DE CHAQUE DOIGT (Geste Solo) ---
+                    const isIndexOpen = landmarks[8].y < landmarks[6].y;
+                    const isMiddleOpen = landmarks[12].y < landmarks[10].y;
+                    const isRingOpen = landmarks[16].y < landmarks[14].y;
+                    const isPinkyOpen = landmarks[20].y < landmarks[18].y;
+                    
+                    let isThumbOpen = false;
+                    if (handedness === "Left") {
+                        isThumbOpen = landmarks[4].x > landmarks[3].x;
+                    } else {
+                        isThumbOpen = landmarks[4].x < landmarks[3].x;
+                    }
+
+                    // --- NOUVEAUX CALCULS DE GÉOMÉTRIE ---
+                    // Distance entre le pouce et l'index pour le signe OK
+                    const distanceThumbIndex = getDistance(landmarks[4], landmarks[8]);
+                    
+                    // Orientation du pouce (axe Y : plus bas en y = plus haut physiquement à l'écran)
+                    const isThumbUp = landmarks[4].y < landmarks[2].y - 0.05;
+                    const isThumbDown = landmarks[4].y > landmarks[2].y + 0.05;
+                    
+                    // Profondeur de l'index (axe Z) pour savoir s'il pointe vers la caméra
+                    const isIndexPointingForward = landmarks[8].z < landmarks[5].z - 0.06;
+
+                    let emoji = "❓";
+
+                    // --- DÉTECTION DES ÉMOJIS ---
+                    
+                    // Geste 👌 : Pouce et index collés, autres doigts ouverts
+                    if (distanceThumbIndex < 0.06 && isMiddleOpen && isRingOpen && isPinkyOpen) {
+                        emoji = "👌";
+                    } 
+                    // Geste 🤙 : Shaka (Pouce et petit doigt en l'air)
+                    else if (isThumbOpen && !isIndexOpen && !isMiddleOpen && !isRingOpen && isPinkyOpen) {
+                        emoji = "🤙";
+                    }
+                    // Geste 🖕 : Majeur uniquement
+                    else if (!isThumbOpen && !isIndexOpen && isMiddleOpen && !isRingOpen && !isPinkyOpen) {
+                        emoji = "🖕";
+                    }
+                    // Geste ☝️ et 🫵 : Index uniquement
+                    else if (!isThumbOpen && isIndexOpen && !isMiddleOpen && !isRingOpen && !isPinkyOpen) {
+                        if (isIndexPointingForward) {
+                            emoji = "🫵"; // Pointe vers l'écran
+                        } else {
+                            emoji = "☝️"; // Pointe vers le haut
+                        }
+                    }
+                    // Geste 👍 : Poing fermé, pouce vers le haut
+                    else if (!isIndexOpen && !isMiddleOpen && !isRingOpen && !isPinkyOpen && isThumbUp) {
+                        emoji = "👍";
+                    }
+                    // Geste 👎 : Poing fermé, pouce vers le bas
+                    else if (!isIndexOpen && !isMiddleOpen && !isRingOpen && !isPinkyOpen && isThumbDown) {
+                        emoji = "👎";
+                    }
+                    // Gestes classiques conservés
+                    else if (isThumbOpen && isIndexOpen && isMiddleOpen && isRingOpen && isPinkyOpen) {
+                        emoji = "🖐️";
+                    } else if (!isThumbOpen && !isIndexOpen && !isMiddleOpen && !isRingOpen && !isPinkyOpen && !isThumbUp && !isThumbDown) {
+                        emoji = "✊";
+                    } else if (!isThumbOpen && isIndexOpen && isMiddleOpen && !isRingOpen && !isPinkyOpen) {
+                        emoji = "✌️";
+                    } else if (!isThumbOpen && isIndexOpen && !isMiddleOpen && !isRingOpen && isPinkyOpen) {
+                        emoji = "🤘";
+                    }
+
+                    // --- AFFICHAGE DE L'ÉMOJI INDIVIDUEL ---
+                    canvasCtx.save();
+                    canvasCtx.translate(canvasElement.width, 0);
+                    canvasCtx.scale(-1, 1);
+                    
+                    const textX = canvasElement.width - (landmarks[12].x * canvasElement.width);
+                    const textY = (landmarks[12].y * canvasElement.height) - 40;
+
+                    canvasCtx.font = "70px sans-serif";
+                    canvasCtx.textAlign = "center";
+                    canvasCtx.fillText(emoji, textX, textY);
+                    canvasCtx.restore();
+                }
+
+                // --- 2. AFFICHAGE DE L'ÉMOJI CŒUR ---
+                if (isHeartFormed) {
+                    canvasCtx.save();
+                    canvasCtx.translate(canvasElement.width, 0);
+                    canvasCtx.scale(-1, 1);
+
+                    const textX = canvasElement.width - (heartCenter.x * canvasElement.width);
+                    const textY = (heartCenter.y * canvasElement.height);
+
+                    canvasCtx.font = "110px sans-serif";
+                    canvasCtx.textAlign = "center";
+                    canvasCtx.textBaseline = "middle";
+                    canvasCtx.fillText("🫶", textX, textY);
+                    canvasCtx.restore();
+                }
+            }
+        }
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 640,
+            height: 480
+        });
+        camera.start();
+    </script>
+</body>
+</html>
